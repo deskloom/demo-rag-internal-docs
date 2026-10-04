@@ -11,7 +11,8 @@ import numpy as np
 from .embed import Embedder, char_ngrams
 from .store import StoredChunk
 
-_SEP = r"\sA-Za-z0-9_\-,.、。（）()「」・：:／/"
+RRF_K = 60
+_SEP =r"\sA-Za-z0-9_\-,.、。（）()「」・：:／/"
 
 
 def tokenize(text: str) -> list[str]:
@@ -71,7 +72,7 @@ class HybridSearcher:
         self.tokset = [set(t) for t in self.tokens]
         self.bm25 = BM25(self.tokens)
 
-    def search(self, query: str, k: int = 5, qvec: np.ndarray | None = None, rrf_k: int = 60) -> list[Hit]:
+    def search(self, query: str, k: int = 5, qvec: np.ndarray | None = None, rrf_k: int = RRF_K) -> list[Hit]:
         if not self.chunks:
             return []
         qv = qvec if qvec is not None else self.embedder.embed_query(query)
@@ -79,9 +80,12 @@ class HybridSearcher:
         qt = tokenize(query)
         bs = self.bm25.scores(qt)
         rank: dict[int, float] = {}
-        for scores in (vs, bs):
-            for r, i in enumerate(np.argsort(-scores)):
-                rank[int(i)] = rank.get(int(i), 0.0) + 1.0 / (rrf_k + r + 1)
+        # ベクトルは全件を順位付け。BM25は語が1つでも一致した（スコア>0）チャンクだけ順位付けする
+        # （一致ゼロのチャンクに任意の順位を与えてRRFを歪めない）。
+        for scores, only_positive in ((vs, False), (bs, True)):
+            order = [int(i) for i in np.argsort(-scores, kind="stable") if not only_positive or scores[i] > 0]
+            for r, i in enumerate(order):
+                rank[i] = rank.get(i, 0.0) + 1.0 / (rrf_k + r + 1)
         qset = set(qt)
         total = sum(self.bm25.idf.get(t, 0.0) for t in qset) or 1.0
         top = sorted(rank, key=lambda i: -rank[i])[:k]

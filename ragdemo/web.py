@@ -24,9 +24,12 @@ button{padding:.6rem 1.2rem;font-size:1rem} #ans{white-space:pre-wrap;background
 document.getElementById('f').addEventListener('submit', async e => {
   e.preventDefault();
   const a = document.getElementById('ans'); a.textContent = '検索中...';
-  const r = await fetch('/api/ask', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({question: document.getElementById('q').value})});
-  const j = await r.json();
+  let r, j;
+  try {
+    r = await fetch('/api/ask', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({question: document.getElementById('q').value})});
+    j = await r.json();
+  } catch (err) { a.textContent = 'エラー: サーバーから正常な応答を得られませんでした（' + (r ? r.status : '接続失敗') + '）'; return; }
   if (!r.ok) { a.textContent = 'エラー: ' + (j.detail || r.status); return; }
   a.textContent = j.text;
   document.getElementById('hits').textContent = j.hits.map(h => `${h.file}「${h.heading}」 score=${h.score.toFixed(4)}`).join('\\n');
@@ -60,6 +63,8 @@ def create_app(dry_run: bool, ingest_on_start: bool = True, db_path=None, docs_d
             a = svc.ask(q)
         except QuotaError as e:
             raise HTTPException(429, f"無料枠の上限に達しました: {e}")
+        except Exception as e:  # APIの一時障害など。内部詳細は出さず502で返す
+            raise HTTPException(502, f"回答の生成に失敗しました（{type(e).__name__}）")
         return {
             "answerable": a.answerable,
             "text": a.text,

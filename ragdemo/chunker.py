@@ -25,22 +25,22 @@ class Chunk:
 
     @property
     def hash(self) -> str:
-        return hashlib.sha256(
-            f"{self.file}\n{self.heading}\n{self.text}".encode("utf-8")
-        ).hexdigest()
+        # 埋め込み入力（文書タイトル・見出し・本文）そのものをハッシュする。
+        # タイトルだけ変わっても再埋め込みされる。
+        return hashlib.sha256(f"{self.file}\n{self.embed_text}".encode("utf-8")).hexdigest()
 
 
-def _split_sections(md: str) -> tuple[str, list[tuple[str, str]]]:
+def _split_sections(md: str) -> tuple[str, list[tuple[str | None, str]]]:
     title = ""
-    sections: list[tuple[str, str]] = []
+    sections: list[tuple[str | None, str]] = []
     cur_head: str | None = None
     buf: list[str] = []
 
     def flush() -> None:
-        if cur_head is not None:
-            body = "\n".join(buf).strip()
-            if body:
-                sections.append((cur_head, body))
+        body = "\n".join(buf).strip()
+        if body:
+            # 最初の見出しより前の本文・見出しの無い文書は heading=None（呼び出し側でタイトルを使う）
+            sections.append((cur_head, body))
 
     for line in md.splitlines():
         m = re.match(r"^(#{1,6})\s+(.*\S)\s*$", line)
@@ -89,6 +89,7 @@ def chunk_markdown(
 ) -> list[Chunk]:
     title, sections = _split_sections(md)
     title = title or file
+    sections = [(h or title, b) for h, b in sections]
 
     # 1) 短い節は次の節へ結合（最後の短い節は直前へ結合）
     merged: list[tuple[str, str]] = []

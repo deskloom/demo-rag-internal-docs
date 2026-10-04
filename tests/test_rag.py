@@ -223,3 +223,110 @@ def test_api_key_loader_never_needs_repo_env(monkeypatch, tmp_path):
     f.write_text('# c\nGEMINI_API_KEY="abc"\n', encoding="utf-8")
     monkeypatch.setenv("GEMINI_ENV_FILE", str(f))
     assert config.get_api_key() == "abc"
+
+
+# ---------- レビュー指摘の回帰テスト ----------
+def test_hash_changes_when_doc_title_changes():  # [A]
+    a = chunk_markdown("x.md", "# 旧タイトル\n\n## A\n" + "あ" * 100)[0]
+    b = chunk_markdown("x.md", "# 新タイトル\n\n## A\n" + "あ" * 100)[0]
+    assert a.text == b.text and a.hash != b.hash
+
+
+def test_title_change_triggers_reembed(docs, tmp_path):  # [A]
+    store = Store(tmp_path / "i.db")
+    ingest(docs, store, MockEmbedder())
+    f = docs / "travel.md"
+    f.write_text(f.read_text(encoding="utf-8").replace("# 出張旅費規程", "# 出張旅費規程（改訂）", 1), encoding="utf-8")
+    r = ingest(docs, store, MockEmbedder())
+    n_travel = sum(1 for c in store.load() if c.file == "travel.md")
+    assert r.embedded == n_travel > 0
+    store.close()
+
+
+def test_preamble_before_first_heading_is_kept():  # [B]
+    md = "# 規程\n\n" + "前文です。" * 15 + "\n\n## 第1条\n" + "あ" * 100 + "\n"
+    cs = chunk_markdown("x.md", md)
+    assert [c.heading for c in cs] == ["規程", "第1条"]
+    assert "前文です。" in cs[0].text
+
+
+def test_doc_without_h2_is_kept_under_title():  # [B]
+    cs = chunk_markdown("x.md", "# メモ\n\n" + "見出しのない本文。" * 12 + "\n")
+    assert len(cs) == 1 and cs[0].heading == "メモ" and "見出しのない本文。" in cs[0].text
+
+
+def test_doc_without_any_heading_uses_filename():  # [B]
+    cs = chunk_markdown("plain.md", "見出しなしの本文。" * 12)
+    assert len(cs) == 1 and cs[0].heading == "plain.md"
+
+
+def test_bm25_zero_match_chunks_not_ranked_in_rrf(docs, tmp_path):  # [C]
+    from ragdemo.search import RRF_K
+
+    store = Store(tmp_path / "i.db")
+    emb = MockEmbedder()
+    ingest(docs, store, emb)
+    s = HybridSearcher(store.load(), emb)
+    q = "夏季休暇は何日取れますか"
+    qv = emb.embed_query(q)
+    vs = s.mat @ qv
+    bs = s.bm25.scores(tokenize(q))
+    assert (bs == 0).any() and (bs > 0).any()
+    zero = int(next(i for i in range(len(bs)) if bs[i] == 0))
+    vrank = int((vs > vs[zero]).sum())  # ベクトル順位（0始まり）
+    top = s.search(q, k=len(s.chunks))
+    got = next(h.score for h in top if h.chunk.id == s.chunks[zero].id)
+    assert got == pytest.approx(1.0 / (RRF_K + vrank + 1))  # BM25側の加算が無い
+    store.close()
+
+
+def test_eval_cache_invalidated_by_config_and_rescored(svc, tmp_path, monkeypatch):  # [D]
+    qs = ev.load_questions(ev.default_questions())[:3]
+    cache = tmp_path / "c.jsonl"
+    ev.run_eval(svc, qs, cache)
+    n = len(cache.read_text(encoding="utf-8").splitlines())
+    ev.run_eval(svc, qs, cache)
+    assert len(cache.read_text(encoding="utf-8").splitlines()) == n  # 再利用
+    for patch in ("ragdemo.evaluate.TOP_K", "ragdemo.evaluate.RRF_K"):
+        monkeypatch.setattr(patch, 99)
+        ev.run_eval(svc, qs, cache)
+        monkeypatch.undo()
+    assert len(cache.read_text(encoding="utf-8").splitlines()) == n + 2 * len(qs)
+    monkeypatch.setattr("ragdemo.evaluate.SYSTEM_PROMPT", "別のプロンプト")
+    ev.run_eval(svc, qs, cache)
+    assert len(cache.read_text(encoding="utf-8").splitlines()) == n + 3 * len(qs)
+
+
+def test_eval_scores_recomputed_not_trusted(svc, tmp_path):  # [D]
+    qs = ev.load_questions(ev.default_questions())[:1]
+    cache = tmp_path / "c.jsonl"
+    ev.run_eval(svc, qs, cache)
+    r = json.loads(cache.read_text(encoding="utf-8"))
+    assert "cited_hits" not in r and "keywords_ok" not in r and r["generated"]
+    r["cited_hits"], r["keywords_ok"] = [True], True  # 改ざんしても無視される
+    r["answerable"], r["cited"], r["answer"] = False, [], "文書に記載がありません。"
+    cache.write_text(json.dumps(r, ensure_ascii=False) + "\n", encoding="utf-8")
+    rows, _ = ev.run_eval(svc, qs, cache)
+    assert rows[0]["cited_hits"] == [False] and rows[0]["keywords_ok"] is False
+    assert ev.report_date(rows) == r["generated"]
+
+
+def test_web_returns_502_on_unexpected_error(docs, tmp_path, monkeypatch):  # [F]
+    from fastapi.testclient import TestClient
+
+    from ragdemo import service
+    from ragdemo.web import create_app
+
+    app = create_app(True, db_path=tmp_path / "w.db", docs_dir=docs)
+    monkeypatch.setattr(service.QAService, "ask", lambda self, q, qvec=None: (_ for _ in ()).throw(ValueError("boom")))
+    r = TestClient(app).post("/api/ask", json={"question": "夏季休暇は？"})
+    assert r.status_code == 502 and "boom" not in r.text
+
+
+def test_cli_ask_before_ingest_exits_with_message(tmp_path, monkeypatch):  # [G]
+    from ragdemo import cli, config
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    with pytest.raises(SystemExit) as e:
+        cli.main(["ask", "夏季休暇は？", "--dry-run"])
+    assert "ingest" in str(e.value)

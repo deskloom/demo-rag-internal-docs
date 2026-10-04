@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date
 
 from . import evaluate as ev
 from .config import EVAL_DIR, GEN_MODEL
@@ -68,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
             print(report)
             if not args.no_report:
                 suffix = "_dryrun" if args.dry_run else ""
-                out = EVAL_DIR / f"results_{date.today().isoformat()}{suffix}.md"
+                out = EVAL_DIR / f"results_{ev.report_date(rows)}{suffix}.md"
                 out.write_text(report, encoding="utf-8")
                 print(f"\n保存: {out}")
             if stopped:
@@ -81,4 +80,6 @@ def main(argv: list[str] | None = None) -> int:
             uvicorn.run(create_app(args.dry_run), host=args.host, port=args.port)
     except QuotaError as e:
         sys.exit(f"無料枠の上限に達しました: {e}")
+    except RuntimeError as e:  # インデックス未作成・キー未設定など、利用者向けメッセージ付きのもの
+        sys.exit(str(e))
     return 0

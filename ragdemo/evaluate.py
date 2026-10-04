@@ -1,17 +1,21 @@
 """評価。出典の一致率・「記載なし」質問の拒否率・回答キーワード含有率・検索再現率を数字で出す。
 
 質問ごとの結果を eval/cache_<mode>.jsonl に追記保存する。無料枠の上限で止まっても、
-再実行すると済んだ質問は飛ばして続きから進む（質問文・モデル・文書の指紋が変わると無効）。
+再実行すると済んだ質問は飛ばして続きから進む（質問文・モデル・埋め込み器・文書の内容・システムプロンプト・TOP_K・RRF_K のどれかが変わると無効）。
+出典一致・キーワード判定は保存せず、毎回、保存済みの回答と出典から再計算する。
 """
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from .answer import SYSTEM_PROMPT
 from .config import EVAL_DIR, GEN_MODEL, TOP_K
 from .embed import QuotaError
+from .search import RRF_K
 from .service import QAService
 
 
@@ -26,47 +30,64 @@ def source_matches(expected: dict, file: str, heading: str) -> bool:
 def evaluate_one(svc: QAService, q: dict) -> dict:
     qvec = svc.embedder.embed_query(q["question"])
     ans = svc.ask(q["question"], qvec=qvec)
-    exp = q.get("expected_sources", [])
-    cited = ans.sources
-    retrieved = [{"file": h.chunk.file, "heading": h.chunk.heading} for h in ans.hits]
-    row = {
+    return {
         "id": q["id"],
         "question": q["question"],
         "type": q["type"],
-        "model": svc.answerer.name,
-        "fingerprint": svc.fingerprint,
+        "cfg": run_config(svc),
+        "generated": date.today().isoformat(),
         "answerable": ans.answerable,
         "answer": ans.text,
-        "cited": cited,
-        "retrieved": retrieved,
+        "cited": ans.sources,
+        "retrieved": [{"file": h.chunk.file, "heading": h.chunk.heading} for h in ans.hits],
     }
+
+
+def run_config(svc: QAService) -> dict:
+    """結果を再利用してよい条件。どれか変わったらキャッシュは無効。"""
+    return {
+        "model": svc.answerer.name,
+        "embedder": svc.embedder.name,
+        "fingerprint": svc.fingerprint,  # 文書（チャンク）の内容
+        "prompt": hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12],
+        "top_k": TOP_K,
+        "rrf_k": RRF_K,
+    }
+
+
+def score_row(row: dict, q: dict) -> dict:
+    """保存済みの回答・出典から、期待値との一致を毎回計算し直す（保存値は信用しない）。"""
+    row = {k: v for k, v in row.items() if k not in ("cited_hits", "retrieved_hits", "keywords_ok")}
+    exp = q.get("expected_sources", [])
     if exp:
-        row["cited_hits"] = [any(source_matches(e, c["file"], c["heading"]) for c in cited) for e in exp]
-        row["retrieved_hits"] = [any(source_matches(e, r["file"], r["heading"]) for r in retrieved) for e in exp]
+        row["cited_hits"] = [any(source_matches(e, c["file"], c["heading"]) for c in row["cited"]) for e in exp]
+        row["retrieved_hits"] = [any(source_matches(e, r["file"], r["heading"]) for r in row["retrieved"]) for e in exp]
         must = q.get("must_include", [])
-        row["keywords_ok"] = all(m in ans.text for m in must) if ans.answerable else False
+        row["keywords_ok"] = all(m in row["answer"] for m in must) if row["answerable"] else False
     return row
 
 
-def _key(q: dict, svc: QAService) -> tuple:
-    return (q["id"], q["question"], svc.answerer.name, svc.fingerprint)
+def _key(id_: str, question: str, cfg: dict) -> str:
+    return json.dumps([id_, question, cfg], sort_keys=True, ensure_ascii=False)
 
 
 def run_eval(svc: QAService, questions: list[dict], cache_path: Path, limit: int | None = None) -> tuple[list[dict], str | None]:
     """戻り値: (質問順の結果行。未実行は含まない, 中断理由またはNone)"""
-    cache: dict[tuple, dict] = {}
+    cache: dict[str, dict] = {}
     if cache_path.is_file():
         for line in cache_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 r = json.loads(line)
-                cache[(r["id"], r["question"], r["model"], r["fingerprint"])] = r
+                if "cfg" in r:  # 旧形式の行は条件が不明なので使わない
+                    cache[_key(r["id"], r["question"], r["cfg"])] = r
+    cfg = run_config(svc)
     rows: list[dict] = []
     stopped: str | None = None
     fresh_calls = 0
     for q in questions:
-        k = _key(q, svc)
+        k = _key(q["id"], q["question"], cfg)
         if k in cache:
-            rows.append(cache[k])
+            rows.append(score_row(cache[k], q))
             continue
         if limit is not None and fresh_calls >= limit:
             stopped = f"--limit {limit} に達したため中断"
@@ -79,7 +100,7 @@ def run_eval(svc: QAService, questions: list[dict], cache_path: Path, limit: int
         fresh_calls += 1
         with cache_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        rows.append(row)
+        rows.append(score_row(row, q))
     return rows, stopped
 
 
@@ -123,7 +144,9 @@ def _pct(a: int, b: int) -> str:
 
 
 def render_report(rows: list[dict], m: Metrics, mode: str, model: str, stopped: str | None) -> str:
-    L = [f"# 評価結果（{date.today().isoformat()}・{mode}）", ""]
+    gen = sorted({r["generated"] for r in rows})
+    gen_txt = "・".join(gen) if gen else "未実行"
+    L = [f"# 評価結果（{mode}）", "", f"- 結果の生成日: {gen_txt}"]
     L.append(f"- 生成モデル: `{model}`（dry-run時は抜粋を返すだけの擬似回答）")
     L.append(f"- 実行できた質問: **{m.n_run} / {m.n_total} 問**")
     if stopped:
@@ -153,6 +176,11 @@ def render_report(rows: list[dict], m: Metrics, mode: str, model: str, stopped: 
     return "\n".join(L)
 
 
+def report_date(rows: list[dict]) -> str:
+    """レポートのファイル名に使う日付。キャッシュ再利用時に今日の日付を名乗らないよう、結果の生成日の最新を使う。"""
+    return max((r["generated"] for r in rows), default=date.today().isoformat())
+
+
 def default_cache(dry_run: bool) -> Path:
     return EVAL_DIR / ("cache_mock.jsonl" if dry_run else "cache_gemini.jsonl")
 
@@ -161,4 +189,4 @@ def default_questions() -> Path:
     return EVAL_DIR / "questions.jsonl"
 
 
-__all__ = ["run_eval", "compute_metrics", "render_report", "load_questions", "default_cache", "default_questions", "GEN_MODEL"]
+__all__ = ["report_date", "run_eval", "compute_metrics", "render_report", "load_questions", "default_cache", "default_questions", "GEN_MODEL"]
