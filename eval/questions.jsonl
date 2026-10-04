@@ -1,0 +1,21 @@
+{"id":"Q01","type":"single","question":"年次有給休暇はいつまでに申請すればいいですか？","expected_sources":[{"file":"leave.md","heading":"第3条"}],"must_include":["3営業日"]}
+{"id":"Q02","type":"single","question":"経費精算の申請期限はいつですか？","expected_sources":[{"file":"expense.md","heading":"第1条"}],"must_include":["5営業日"]}
+{"id":"Q03","type":"single","question":"社内システムのパスワードの有効期限は何日ですか？","expected_sources":[{"file":"it_faq.md","heading":"パスワードの規則"}],"must_include":["90日"]}
+{"id":"Q04","type":"single","question":"フレックスタイム制のコアタイムは何時から何時までですか？","expected_sources":[{"file":"work_rules.md","heading":"フレックス"}],"must_include":["11時","15時"]}
+{"id":"Q05","type":"single","question":"国内出張の日当はいくらですか？","expected_sources":[{"file":"travel.md","heading":"第2条"}],"must_include":["3,000円"]}
+{"id":"Q06","type":"single","question":"試用期間は何か月ですか？","expected_sources":[{"file":"onboarding_offboarding.md","heading":"試用期間"}],"must_include":["3か月"]}
+{"id":"Q07","type":"single","question":"基本情報技術者に合格したらいくらもらえますか？","expected_sources":[{"file":"training.md","heading":"第2条"}],"must_include":["1万円"]}
+{"id":"Q08","type":"single","question":"ハラスメント相談窓口の受付時間を教えてください。","expected_sources":[{"file":"harassment.md","heading":"第3条"}],"must_include":["10時","17時"]}
+{"id":"Q09","type":"single","question":"貸与PCをなくしたら、いつまでに誰に連絡すればいいですか？","expected_sources":[{"file":"equipment.md","heading":"第3条"}],"must_include":["1時間","情報システム部"]}
+{"id":"Q10","type":"single","question":"夏季休暇は何日取れますか？","expected_sources":[{"file":"leave.md","heading":"第6条"}],"must_include":["3日"]}
+{"id":"Q11","type":"single","question":"在宅勤務は週に何日までできますか？","expected_sources":[{"file":"remote_work.md","heading":"第2条"}],"must_include":["3日"]}
+{"id":"Q12","type":"single","question":"退職したいときは、いつまでに退職届を出せばよいですか？","expected_sources":[{"file":"onboarding_offboarding.md","heading":"退職の申し出"}],"must_include":["1か月"]}
+{"id":"Q13","type":"multi","question":"在宅勤務の通信費はいくら支給されますか？領収書は必要ですか？","expected_sources":[{"file":"remote_work.md","heading":"第5条"},{"file":"expense.md","heading":"第6条"}],"must_include":["3,000円"]}
+{"id":"Q14","type":"multi","question":"退職するとき、貸与PCはいつまでにどのような状態で返せばいいですか？","expected_sources":[{"file":"onboarding_offboarding.md","heading":"退職時の返却物"},{"file":"equipment.md","heading":"第5条"}],"must_include":["初期化せず"]}
+{"id": "Q15", "type": "multi", "question": "在宅勤務中に貸与PCを紛失してしまいました。どう対応すればよいですか？", "expected_sources": [{"file": "equipment.md", "heading": "第3条"}, {"file": "security.md", "heading": "第5条"}], "must_include": ["1時間"]}
+{"id":"Q16","type":"multi","question":"出張の旅費はいつまでに、どのシステムで精算しますか？","expected_sources":[{"file":"travel.md","heading":"第5条"},{"file":"expense.md","heading":"第1条"}],"must_include":["5営業日","ケイヒノート"]}
+{"id":"Q17","type":"none","question":"社員食堂のランチの値段はいくらですか？","expected_sources":[],"must_include":[]}
+{"id":"Q18","type":"none","question":"退職金はどのように計算されますか？","expected_sources":[],"must_include":[]}
+{"id":"Q19","type":"none","question":"育児休業中の給与は何割支給されますか？","expected_sources":[],"must_include":[]}
+{"id":"Q20","type":"none","question":"海外赴任中の住宅手当はいくらですか？","expected_sources":[],"must_include":[]}
+{"id":"Q21","type":"none","question":"在宅勤務で自宅の電気代は支給されますか？","expected_sources":[],"must_include":[]}
